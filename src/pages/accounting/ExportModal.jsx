@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 // ─── Column definitions ───────────────────────────────────────────────────────
 const ALL_COLUMNS = [
-  { key: 'tripDate',     label: 'วันที่เที่ยว',         default: true },
+  { key: 'tripDate',     label: 'วันที่',               default: true },
   { key: 'truck',        label: 'ทะเบียนรถ',             default: true },
   { key: 'company',      label: 'บริษัท',                default: true },
   { key: 'route',        label: 'เส้นทาง',               default: true },
@@ -20,6 +20,9 @@ const RANGE_OPTIONS = [
   { key: 'year',    label: 'ปีนี้' },
   { key: 'custom',  label: 'กำหนดเอง' },
 ]
+
+const MONTHS_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.']
+const MONTHS_FULL_TH = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const totalExp = (exp = {}) =>
@@ -56,13 +59,28 @@ function getRangeFilter(range, customFrom, customTo) {
 }
 
 function getRangeLabel(range, customFrom, customTo) {
-  const MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.']
   const now = new Date()
-  if (range === 'month') return `${MONTHS[now.getMonth()]} ${now.getFullYear() + 543}`
+  if (range === 'month') return `${MONTHS_TH[now.getMonth()]} ${now.getFullYear() + 543}`
   if (range === 'last3') return '3 เดือนล่าสุด'
   if (range === 'year') return `ปี ${now.getFullYear() + 543}`
   if (range === 'custom' && customFrom && customTo) return `${customFrom} ถึง ${customTo}`
   return ''
+}
+
+// ดึงเดือน+ปีจากช่วงเวลาสำหรับหัวข้อวางบิล
+function getBillingHeading(range, customFrom, customTo) {
+  const now = new Date()
+  if (range === 'month') {
+    return { month: MONTHS_FULL_TH[now.getMonth()], year: now.getFullYear() + 543 }
+  }
+  if (range === 'year') {
+    return { month: null, year: now.getFullYear() + 543 }
+  }
+  if (range === 'custom' && customFrom) {
+    const d = new Date(customFrom)
+    return { month: MONTHS_FULL_TH[d.getMonth()], year: d.getFullYear() + 543 }
+  }
+  return { month: null, year: now.getFullYear() + 543 }
 }
 
 function formatTimestamp(d = new Date()) {
@@ -70,6 +88,12 @@ function formatTimestamp(d = new Date()) {
     year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })
+}
+
+function formatDateTH(dateStr) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 function buildRows(trips, trucks, companies, selectedCols) {
@@ -81,11 +105,9 @@ function buildRows(trips, trucks, companies, selectedCols) {
     const route = t.hasReturn
       ? `${t.origin}→${t.destination} / ${t.returnOrigin||t.destination}→${t.returnDestination||t.origin}`
       : `${t.origin}→${t.destination}`
-
     const paymentLabel = t.paymentMode === 'cash' ? 'เงินสด' : 'เครดิต'
     const statusLabel  = t.paymentMode === 'cash' ? 'เงินสด'
       : t.status === 'received' ? 'รับแล้ว' : 'รอรับ'
-
     const map = {
       tripDate:    t.tripDate || '',
       truck:       truck?.plate || '',
@@ -104,23 +126,18 @@ function buildRows(trips, trucks, companies, selectedCols) {
 
 // ─── Excel Export ─────────────────────────────────────────────────────────────
 async function exportExcel(rows, selectedCols, rangeLabel, exportedAt) {
-  // Dynamically load SheetJS from CDN
   if (!window.XLSX) {
     await new Promise((resolve, reject) => {
       const s = document.createElement('script')
       s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
-      s.onload = resolve
-      s.onerror = reject
+      s.onload = resolve; s.onerror = reject
       document.head.appendChild(s)
     })
   }
   const XLSX = window.XLSX
-
   const colDef = ALL_COLUMNS.filter(c => selectedCols.includes(c.key))
   const headers = colDef.map(c => c.label)
-
   const dataRows = rows.map(r => colDef.map(c => r[c.key]))
-
   const ws_data = [
     [`รายงานบัญชีรายรับ-รายจ่าย — ${rangeLabel}`],
     [`Export ณ ${exportedAt}`],
@@ -130,19 +147,13 @@ async function exportExcel(rows, selectedCols, rangeLabel, exportedAt) {
     [],
     [`รวม ${rows.length} เที่ยว`],
   ]
-
   const ws = XLSX.utils.aoa_to_sheet(ws_data)
-
-  // Column widths
   ws['!cols'] = colDef.map(c =>
-    ['income','expense','profit'].includes(c.key)
-      ? { wch: 16 }
-      : c.key === 'route' ? { wch: 36 } : { wch: 18 }
+    ['income','expense','profit'].includes(c.key) ? { wch: 16 }
+    : c.key === 'route' ? { wch: 36 } : { wch: 18 }
   )
-
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'รายงาน')
-
   const dateSlug = new Date().toISOString().slice(0, 10)
   XLSX.writeFile(wb, `บัญชี_${rangeLabel}_${dateSlug}.xlsx`)
 }
@@ -152,18 +163,18 @@ async function exportPDF(rows, selectedCols, rangeLabel, exportedAt, summary) {
   const colDef = ALL_COLUMNS.filter(c => selectedCols.includes(c.key))
 
   const summaryRows = [
-    ['รายรับเงินสด', `${summary.cashIncome.toLocaleString()} บาท`],
-    ['เครดิตรอรับ', `${summary.creditPending.toLocaleString()} บาท`],
-    ['รายจ่ายรวม', `${summary.totalExpense.toLocaleString()} บาท`],
-    ['กำไรสุทธิ', `${summary.totalProfit.toLocaleString()} บาท`],
-  ]
+    summary.cashIncome  > 0 ? ['รายรับเงินสด',  `${summary.cashIncome.toLocaleString()} บาท`]  : null,
+    summary.creditPending > 0 ? ['เครดิตรอรับ', `${summary.creditPending.toLocaleString()} บาท`] : null,
+    summary.totalExpense > 0 ? ['รายจ่ายรวม',  `${summary.totalExpense.toLocaleString()} บาท`]  : null,
+    summary.totalProfit  !== 0 ? ['กำไรสุทธิ',  `${summary.totalProfit.toLocaleString()} บาท`]  : null,
+  ].filter(Boolean)
 
   const detailRows = rows.map(r =>
     colDef.map(c => {
       const v = r[c.key]
+      if (c.key === 'tripDate') return formatDateTH(v)
       return ['income','expense','profit'].includes(c.key)
-        ? Number(v).toLocaleString()
-        : String(v ?? '')
+        ? Number(v).toLocaleString() : String(v ?? '')
     })
   )
 
@@ -182,10 +193,7 @@ async function exportPDF(rows, selectedCols, rangeLabel, exportedAt, summary) {
     .summary td:first-child { color: #555; width: 160px; }
     .summary td:last-child { font-weight: 600; }
     table.detail { width: 100%; border-collapse: collapse; font-size: 9pt; }
-    table.detail th {
-      background: #1e64b4; color: #fff; font-weight: 600;
-      padding: 6px 8px; text-align: left; border: 1px solid #1557a0;
-    }
+    table.detail th { background: #1e64b4; color: #fff; font-weight: 600; padding: 6px 8px; text-align: left; border: 1px solid #1557a0; }
     table.detail td { padding: 5px 8px; border: 1px solid #e0e0e0; }
     table.detail tr:nth-child(even) td { background: #f5f8ff; }
     .footer { margin-top: 16px; font-size: 8pt; color: #999; text-align: right; }
@@ -198,11 +206,10 @@ async function exportPDF(rows, selectedCols, rangeLabel, exportedAt, summary) {
 <body>
   <h1>รายงานบัญชีรายรับ-รายจ่าย</h1>
   <div class="meta">ช่วงเวลา: ${rangeLabel} &nbsp;|&nbsp; Export ณ ${exportedAt}</div>
-
+  ${summaryRows.length > 0 ? `
   <table class="summary">
     ${summaryRows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}
-  </table>
-
+  </table>` : ''}
   <table class="detail">
     <thead>
       <tr>${colDef.map(c => `<th>${c.label}</th>`).join('')}</tr>
@@ -211,14 +218,170 @@ async function exportPDF(rows, selectedCols, rangeLabel, exportedAt, summary) {
       ${detailRows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('')}
     </tbody>
   </table>
-
   <div class="footer">รายงานบัญชีรายรับ-รายจ่าย | ${exportedAt}</div>
-
   <script>
-    window.onload = () => {
-      setTimeout(() => { window.print(); window.close(); }, 800)
-    }
+    window.onload = () => { setTimeout(() => { window.print(); window.close(); }, 800) }
   </script>
+</body>
+</html>`
+
+  const win = window.open('', '_blank')
+  win.document.write(html)
+  win.document.close()
+}
+
+// ─── Billing PDF Export (แยกรายคัน) ──────────────────────────────────────────
+async function exportBillingPDF(trips, trucks, companies, range, customFrom, customTo) {
+  const filterFn = getRangeFilter(range, customFrom, customTo)
+  const filtered = trips.filter(filterFn)
+  const { month, year } = getBillingHeading(range, customFrom, customTo)
+  const exportedAt = formatTimestamp()
+
+  // จัดกลุ่มตามรถ
+  const truckGroups = {}
+  filtered.forEach(t => {
+    const key = t.truckId || '__unknown__'
+    if (!truckGroups[key]) truckGroups[key] = []
+    truckGroups[key].push(t)
+  })
+
+  // สร้าง HTML แยกแต่ละคัน แบ่งหน้า
+  const truckSections = Object.entries(truckGroups).map(([truckId, truckTrips], groupIdx) => {
+    const truck = trucks.find(tk => tk.id === truckId)
+    const plate = truck?.plate || 'ไม่ระบุทะเบียน'
+
+    const totalTripIncome  = truckTrips.reduce((s, t) => s + totalIncome(t), 0)
+    const totalTripExpense = truckTrips.reduce((s, t) => s + totalExp(t.expenses), 0)
+    const totalTripProfit  = totalTripIncome - totalTripExpense
+
+    const rows = truckTrips
+      .slice()
+      .sort((a, b) => (a.tripDate || '').localeCompare(b.tripDate || ''))
+      .map((t, i) => {
+        const company = companies.find(c => c.id === t.companyId)
+        const income  = totalIncome(t)
+        const expense = totalExp(t.expenses)
+        const profit  = income - expense
+        const route   = t.hasReturn
+          ? `${t.origin}→${t.destination} / ${t.returnOrigin||t.destination}→${t.returnDestination||t.origin}`
+          : `${t.origin}→${t.destination}`
+        const payLabel = t.paymentMode === 'cash' ? 'เงินสด'
+          : t.status === 'received' ? 'รับแล้ว' : 'รอรับ'
+        const rowBg = i % 2 === 1 ? 'background:#f0f5ff' : ''
+        return `
+          <tr style="${rowBg}">
+            <td style="text-align:center">${i + 1}</td>
+            <td>${formatDateTH(t.tripDate)}</td>
+            <td>${route}</td>
+            <td style="text-align:right">${income.toLocaleString()}</td>
+          </tr>`
+      }).join('')
+
+    const headingTitle = month
+      ? `เที่ยววิ่งประจำเดือน${month} ปี ${year}`
+      : `เที่ยววิ่งประจำปี ${year}`
+
+    return `
+      <div class="truck-section" style="${groupIdx > 0 ? 'page-break-before:always;' : ''}">
+        <!-- Header bar -->
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;padding-bottom:10px;border-bottom:2.5px solid #1e64b4">
+          <div>
+            <div style="font-size:13pt;color:#999;font-weight:600;letter-spacing:.5px;margin-bottom:3px">${headingTitle}</div>
+            <div style="font-size:20pt;font-weight:700;color:#1a202c">ทะเบียนรถ ${plate}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:9pt;color:#888">จำนวน <strong style="color:#1e64b4">${truckTrips.length}</strong> เที่ยว</div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <table style="width:100%;border-collapse:collapse;font-size:9.5pt">
+          <thead>
+            <tr>
+              <th style="width:34px">#</th>
+              <th>วันที่</th>
+              <th>เส้นทาง</th>
+              <th style="text-align:right">รายรับ (บาท)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" style="text-align:right;padding:8px;font-weight:700;border-top:2px solid #1e64b4;background:#f8faff">รวมทั้งสิ้น</td>
+              <td style="text-align:right;font-weight:700;border-top:2px solid #1e64b4;background:#f0f5ff;color:#16a34a">${totalTripIncome.toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>`
+  }).join('')
+
+  const html = `<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8"/>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Sarabun', sans-serif; font-size: 11pt; color: #1a1a1a; background: #fff; }
+
+    .truck-section { padding: 24px 28px; min-height: 100vh; position: relative; padding-bottom: 60px; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: #1e64b4; color: #fff; font-weight: 600;
+      padding: 7px 10px; border: 1px solid #1557a0; font-size: 9pt;
+    }
+    tbody td { padding: 6px 10px; border: 1px solid #dde3f0; font-size: 9pt; }
+    tfoot td { padding: 7px 10px; border: 1px solid #b8c9ea; font-size: 9.5pt; }
+
+    .page-footer {
+      position: fixed;
+      bottom: 16px;
+      right: 28px;
+      font-size: 8pt;
+      color: #aaa;
+      text-align: right;
+    }
+
+    @media print {
+      body { background: white; }
+      .truck-section { padding: 16px 18px; }
+      @page {
+        size: A4 landscape;
+        margin: 14mm 16mm 20mm 16mm;
+      }
+      .page-footer { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+${truckSections}
+
+<div class="page-footer">
+  Export ณ ${exportedAt} &nbsp;|&nbsp; หน้า <span id="pg"></span>
+</div>
+
+<script>
+  // Page numbering for screen view
+  document.getElementById('pg').textContent = '1';
+  const style = document.createElement('style');
+  style.textContent = \`
+    @media print {
+      @page { @bottom-right { content: "Export ณ ${exportedAt}   หน้า " counter(page) " / " counter(pages); font-size: 8pt; color: #999; font-family: Sarabun, sans-serif; } }
+    }
+  \`;
+  document.head.appendChild(style);
+
+  // รอให้ฟอนต์โหลดเสร็จก่อน print เพื่อป้องกันตัวอักษรภาษาไทยแตก
+  window.onload = () => {
+    document.fonts.ready.then(() => {
+      setTimeout(() => { window.print(); window.close(); }, 200);
+    });
+  };
+</script>
 </body>
 </html>`
 
@@ -233,7 +396,7 @@ export default function ExportModal({ trips, trucks, companies, onClose }) {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo]     = useState('')
   const [selected, setSelected]     = useState(new Set(ALL_COLUMNS.filter(c => c.default).map(c => c.key)))
-  const [loading, setLoading]       = useState(null)  // 'excel' | 'pdf' | null
+  const [loading, setLoading]       = useState(null)  // 'excel' | 'pdf' | 'billing' | null
 
   const toggleCol = (key) => {
     setSelected(prev => {
@@ -252,8 +415,8 @@ export default function ExportModal({ trips, trucks, companies, onClose }) {
   }
 
   const prepareData = () => {
-    const filterFn  = getRangeFilter(range, customFrom, customTo)
-    const filtered  = trips.filter(filterFn)
+    const filterFn   = getRangeFilter(range, customFrom, customTo)
+    const filtered   = trips.filter(filterFn)
     const rangeLabel = getRangeLabel(range, customFrom, customTo)
     const exportedAt = formatTimestamp()
     const selectedCols = ALL_COLUMNS.filter(c => selected.has(c.key)).map(c => c.key)
@@ -284,6 +447,14 @@ export default function ExportModal({ trips, trucks, companies, onClose }) {
     try {
       const { rows, rangeLabel, exportedAt, selectedCols, summary } = prepareData()
       await exportPDF(rows, selectedCols, rangeLabel, exportedAt, summary)
+    } catch (e) { console.error(e); alert('Export ไม่สำเร็จ: ' + e.message) }
+    setLoading(null)
+  }
+
+  const handleBilling = async () => {
+    setLoading('billing')
+    try {
+      await exportBillingPDF(trips, trucks, companies, range, customFrom, customTo)
     } catch (e) { console.error(e); alert('Export ไม่สำเร็จ: ' + e.message) }
     setLoading(null)
   }
@@ -341,10 +512,31 @@ export default function ExportModal({ trips, trucks, companies, onClose }) {
 
           <div className="border-t border-gray-100" />
 
+          {/* Billing PDF section */}
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-amber-800 mb-1">🧾 วางบิลแยกรายคัน</p>
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  สร้าง PDF สรุปเที่ยววิ่งสำหรับวางบิล
+                </p>
+              </div>
+              <button
+                onClick={handleBilling}
+                disabled={!!loading || count === 0}
+                className="flex-shrink-0 flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+              >
+                {loading === 'billing' ? '⏳...' : '📄 Export'}
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100" />
+
           {/* Column selector */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">เลือก Column</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">เลือก Column (Excel / PDF)</p>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-400 bg-gray-50 px-2.5 py-1 rounded-full border border-gray-200">
                   {selected.size} / {ALL_COLUMNS.length}
